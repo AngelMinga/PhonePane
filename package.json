@@ -2,7 +2,7 @@
   "name": "phonepane",
   "displayName": "PhonePane",
   "description": "%extension.description%",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "angelminga",
   "license": "MIT",
   "repository": {
@@ -25,7 +25,9 @@
   ],
   "main": "./out/extension.js",
   "l10n": "./l10n",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -48,7 +50,16 @@
         {
           "type": "webview",
           "id": "phonePane.mirror",
-          "name": "%view.mirror.name%"
+          "name": "%view.mirror.name%",
+          "when": "phonePane.side != right"
+        }
+      ],
+      "phonePaneRight": [
+        {
+          "type": "webview",
+          "id": "phonePane.mirrorRight",
+          "name": "%view.mirror.name%",
+          "when": "phonePane.side == right"
         }
       ]
     },
@@ -94,42 +105,42 @@
       "view/title": [
         {
           "command": "phonePane.pause",
-          "when": "view == phonePane.mirror && !phonePane.paused",
+          "when": "view =~ /^phonePane\\.mirror/ && !phonePane.paused",
           "group": "navigation@1"
         },
         {
           "command": "phonePane.resume",
-          "when": "view == phonePane.mirror && phonePane.paused",
+          "when": "view =~ /^phonePane\\.mirror/ && phonePane.paused",
           "group": "navigation@1"
         },
         {
           "command": "phonePane.selectDevice",
-          "when": "view == phonePane.mirror",
+          "when": "view =~ /^phonePane\\.mirror/",
           "group": "navigation@2"
         },
         {
           "command": "phonePane.showLog",
-          "when": "view == phonePane.mirror",
+          "when": "view =~ /^phonePane\\.mirror/",
           "group": "overflow@1"
         },
         {
           "command": "phonePane.moveRight",
-          "when": "view == phonePane.mirror && phonePane.side != right",
+          "when": "view =~ /^phonePane\\.mirror/ && phonePane.side != right",
           "group": "navigation@3"
         },
         {
           "command": "phonePane.moveLeft",
-          "when": "view == phonePane.mirror && phonePane.side == right",
+          "when": "view =~ /^phonePane\\.mirror/ && phonePane.side == right",
           "group": "navigation@3"
         },
         {
           "command": "phonePane.moveLeft",
-          "when": "view == phonePane.mirror && phonePane.side != left",
+          "when": "view =~ /^phonePane\\.mirror/ && phonePane.side != left",
           "group": "overflow@2"
         },
         {
           "command": "phonePane.moveRight",
-          "when": "view == phonePane.mirror && phonePane.side != right",
+          "when": "view =~ /^phonePane\\.mirror/ && phonePane.side != right",
           "group": "overflow@2"
         }
       ],

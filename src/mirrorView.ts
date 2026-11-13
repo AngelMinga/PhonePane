@@ -8,14 +8,12 @@ import { findScrcpyServer, ScrcpySource } from './scrcpy';
 const SERIAL_KEY = 'phonePane.serial';
 const RETRY_MS = 2000;
 const SIDE_KEY = 'phonePane.side';
-/** View containers declared in package.json (activity bar and secondary side bar). */
-const LEFT_CONTAINER = 'workbench.view.extension.phonePane';
-const RIGHT_CONTAINER = 'workbench.view.extension.phonePaneRight';
 
 type Mode = 'auto' | 'scrcpy' | 'screencap';
 
 export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewId = 'phonePane.mirror';
+  static readonly rightViewId = 'phonePane.mirrorRight';
 
   private view?: vscode.WebviewView;
   private readonly adb = new Adb(resolveAdbPath());
@@ -100,22 +98,15 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
     );
   }
 
-  /** Moves the view to the primary (left) or secondary (right) side bar. */
+  /**
+   * Shows the panel in the primary (left) or secondary (right) side bar. There is one view
+   * in each side bar and the `phonePane.side` context key decides which one is visible.
+   */
   async moveTo(side: 'left' | 'right'): Promise<void> {
-    const destinationId = side === 'left' ? LEFT_CONTAINER : RIGHT_CONTAINER;
-    try {
-      await vscode.commands.executeCommand('vscode.moveViews', {
-        viewIds: [MirrorViewProvider.viewId],
-        destinationId,
-      });
-      await this.context.globalState.update(SIDE_KEY, side);
-      void vscode.commands.executeCommand('setContext', 'phonePane.side', side);
-    } catch (err) {
-      this.log.error(`Could not move the view: ${err}`);
-      // Older VS Code: let the user pick the destination by hand.
-      await vscode.commands.executeCommand(`${MirrorViewProvider.viewId}.focus`);
-      await vscode.commands.executeCommand('workbench.action.moveFocusedView');
-    }
+    await this.context.globalState.update(SIDE_KEY, side);
+    await vscode.commands.executeCommand('setContext', 'phonePane.side', side);
+    const viewId = side === 'left' ? MirrorViewProvider.viewId : MirrorViewProvider.rightViewId;
+    await vscode.commands.executeCommand(`${viewId}.focus`);
   }
 
   // ---- Commands -----------------------------------------------------------

@@ -9,6 +9,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log,
     provider,
     vscode.window.registerWebviewViewProvider(MirrorViewProvider.viewId, provider),
+    vscode.window.registerWebviewViewProvider(MirrorViewProvider.rightViewId, provider),
     vscode.commands.registerCommand('phonePane.selectDevice', () => provider.selectDevice()),
     vscode.commands.registerCommand('phonePane.pause', () => provider.setPaused(true)),
     vscode.commands.registerCommand('phonePane.resume', () => provider.setPaused(false)),
