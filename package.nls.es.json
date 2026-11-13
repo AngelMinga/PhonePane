@@ -1,0 +1,9 @@
+{
+  "extension.description": "Refleja y controla tu dispositivo Android desde un panel lateral de VS Code.",
+  "view.mirror.name": "Dispositivo",
+  "command.selectDevice.title": "Seleccionar dispositivo",
+  "command.pause.title": "Pausar el espejo",
+  "command.resume.title": "Reanudar el espejo",
+  "config.adbPath": "Ruta al ejecutable `adb`. Déjala vacía para detectarlo automáticamente (PATH, `ANDROID_HOME`, Android SDK, Homebrew).",
+  "config.frameInterval": "Milisegundos de espera entre capturas de pantalla. Valores más bajos dan más fluidez pero consumen más CPU."
+}

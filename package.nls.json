@@ -1,0 +1,9 @@
+{
+  "extension.description": "Mirror and control your Android device from a VS Code side panel.",
+  "view.mirror.name": "Device",
+  "command.selectDevice.title": "Select Device",
+  "command.pause.title": "Pause Mirroring",
+  "command.resume.title": "Resume Mirroring",
+  "config.adbPath": "Path to the `adb` executable. Leave empty to detect it automatically (PATH, `ANDROID_HOME`, Android SDK, Homebrew).",
+  "config.frameInterval": "Milliseconds to wait between screen captures. Lower values are smoother but use more CPU."
+}

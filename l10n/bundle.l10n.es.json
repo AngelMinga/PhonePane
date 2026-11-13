@@ -1,0 +1,15 @@
+{
+  "No Android device connected.": "No hay ningún dispositivo Android conectado.",
+  "Select the device to mirror": "Selecciona el dispositivo que quieres reflejar",
+  "adb was not found at \"{0}\". Install Android platform-tools or set \"phonePane.adbPath\".": "No se encontró adb en «{0}». Instala Android platform-tools o configura «phonePane.adbPath».",
+  "Accept the USB debugging prompt on the device.": "Acepta el aviso de depuración USB en el dispositivo.",
+  "Connecting to the device…": "Conectando con el dispositivo…",
+  "Retry": "Reintentar",
+  "Back": "Atrás",
+  "Home": "Inicio",
+  "Recent apps": "Apps recientes",
+  "Power": "Encendido",
+  "Volume up": "Subir volumen",
+  "Volume down": "Bajar volumen",
+  "Paused": "En pausa"
+}
