@@ -5,5 +5,13 @@
   "command.pause.title": "Pausar el espejo",
   "command.resume.title": "Reanudar el espejo",
   "config.adbPath": "Ruta al ejecutable `adb`. Déjala vacía para detectarlo automáticamente (PATH, `ANDROID_HOME`, Android SDK, Homebrew).",
-  "config.frameInterval": "Milisegundos de espera entre capturas de pantalla. Valores más bajos dan más fluidez pero consumen más CPU."
+  "config.frameInterval": "Modo capturas: milisegundos de espera entre capturas.",
+  "command.showLog.title": "Mostrar registro",
+  "config.mode": "Cómo se refleja la pantalla. `auto` usa scrcpy si está instalado y, si no, capturas de pantalla.",
+  "config.mode.auto": "scrcpy si está disponible; si no, capturas de pantalla.",
+  "config.mode.scrcpy": "Usar siempre scrcpy (vídeo H.264 fluido, toques en tiempo real).",
+  "config.mode.screencap": "Usar siempre `adb screencap` (lento, solo necesita adb).",
+  "config.scrcpyServerPath": "Ruta al archivo `scrcpy-server` de un scrcpy instalado. Déjala vacía para detectarlo (Homebrew, `/usr/share/scrcpy`, `SCRCPY_SERVER_PATH`).",
+  "config.maxSize": "scrcpy: ancho o alto máximo del vídeo en píxeles (`0` = resolución nativa).",
+  "config.videoBitRate": "scrcpy: tasa de bits del vídeo en bits por segundo."
 }

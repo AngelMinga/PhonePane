@@ -51,11 +51,17 @@ body {
   line-height: 1.4;
 }
 
-#paused-badge {
+#badges {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  padding: 2px 8px;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+
+#badges span {
+  padding: 1px 7px;
   border-radius: 10px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
@@ -98,6 +104,10 @@ button:hover {
 
 #nav button:hover {
   background: var(--vscode-toolbar-hoverBackground);
+}
+
+#mode-badge {
+  opacity: 0.75;
 }
 
 #toast {

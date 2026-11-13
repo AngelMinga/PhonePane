@@ -1,35 +1,38 @@
 import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { Adb, AdbError, Device, resolveAdbPath } from './adb';
+import { ClientMessage, MirrorSource } from './protocol';
+import { ScreencapSource } from './screencap';
+import { findScrcpyServer, ScrcpySource } from './scrcpy';
 
 const SERIAL_KEY = 'phonePane.serial';
+const RETRY_MS = 2000;
 
-type ClientMessage =
-  | { type: 'ready' }
-  | { type: 'retry' }
-  | { type: 'tap'; x: number; y: number }
-  | { type: 'swipe'; x1: number; y1: number; x2: number; y2: number; duration: number }
-  | { type: 'key'; code: number }
-  | { type: 'text'; text: string };
+type Mode = 'auto' | 'scrcpy' | 'screencap';
 
 export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewId = 'phonePane.mirror';
 
   private view?: vscode.WebviewView;
   private readonly adb = new Adb(resolveAdbPath());
+  private source?: MirrorSource;
   private paused = false;
 
-  /** Bumped on every start/stop so stale capture loops exit on their own. */
+  /** Whether the webview can decode H.264; unknown until it says it is ready. */
+  private webviewH264?: boolean;
+  /** Set when scrcpy failed to start, so `auto` stops retrying it until the user asks. */
+  private scrcpyFailed = false;
+
+  /** Bumped by stop() so a start() still in progress knows it is stale. */
   private generation = 0;
-  private isRunning = false;
-  /** False until the current device has been confirmed online and announced to the webview. */
-  private deviceReady = false;
-  private timer?: NodeJS.Timeout;
-  private lastFrame?: Buffer;
-  private inputQueue: Promise<unknown> = Promise.resolve();
+  private starting = false;
+  private retryTimer?: NodeJS.Timeout;
   private readonly disposables: vscode.Disposable[] = [];
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly log: vscode.LogOutputChannel,
+  ) {
     this.adb.serial = context.globalState.get<string>(SERIAL_KEY);
     void vscode.commands.executeCommand('setContext', 'phonePane.paused', false);
 
@@ -37,6 +40,13 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('phonePane.adbPath')) {
           this.adb.bin = resolveAdbPath();
+        }
+        if (
+          ['adbPath', 'mode', 'scrcpyServerPath', 'maxSize', 'videoBitRate'].some((k) =>
+            e.affectsConfiguration(`phonePane.${k}`),
+          )
+        ) {
+          this.scrcpyFailed = false;
           this.restart();
         }
       }),
@@ -50,11 +60,26 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
     view.webview.html = this.html(view.webview, mediaRoot);
 
     view.webview.onDidReceiveMessage((m: ClientMessage) => this.onMessage(m), null, this.disposables);
-    view.onDidChangeVisibility(() => (view.visible ? this.start() : this.stop()), null, this.disposables);
-    view.onDidDispose(() => {
-      this.stop();
-      this.view = undefined;
-    }, null, this.disposables);
+    view.onDidChangeVisibility(
+      () => {
+        // The webview is torn down while hidden; it says "ready" again when shown.
+        if (!view.visible) {
+          this.webviewH264 = undefined;
+          this.stop();
+        }
+      },
+      null,
+      this.disposables,
+    );
+    view.onDidDispose(
+      () => {
+        this.stop();
+        this.view = undefined;
+        this.webviewH264 = undefined;
+      },
+      null,
+      this.disposables,
+    );
   }
 
   // ---- Commands -----------------------------------------------------------
@@ -76,13 +101,14 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
         label: d.model ?? d.serial,
         description: d.serial,
         detail: d.state === 'device' ? undefined : d.state,
-        picked: d.serial === this.adb.serial,
         device: d,
       })),
       { placeHolder: vscode.l10n.t('Select the device to mirror') },
     );
     if (picked) {
-      await this.useDevice(picked.device);
+      this.adb.serial = picked.device.serial;
+      await this.context.globalState.update(SERIAL_KEY, picked.device.serial);
+      this.scrcpyFailed = false;
       this.restart();
     }
   }
@@ -90,146 +116,182 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
   setPaused(paused: boolean): void {
     this.paused = paused;
     void vscode.commands.executeCommand('setContext', 'phonePane.paused', paused);
-    this.post({ type: 'paused', paused });
+    void this.post({ type: 'paused', paused });
     if (paused) {
       this.stop();
     } else {
-      this.start();
+      void this.start();
     }
   }
 
-  // ---- Capture loop -------------------------------------------------------
+  showLog(): void {
+    this.log.show();
+  }
 
-  private start(): void {
-    if (!this.view?.visible || this.paused || this.isRunning) {
+  // ---- Lifecycle ----------------------------------------------------------
+
+  private async start(): Promise<void> {
+    if (
+      !this.view?.visible ||
+      this.paused ||
+      this.source ||
+      this.starting ||
+      this.webviewH264 === undefined
+    ) {
       return;
     }
-    this.isRunning = true;
-    const gen = ++this.generation;
-    void this.tick(gen);
+    this.starting = true;
+    const gen = this.generation;
+    try {
+      const device = await this.pickDevice();
+      if (gen !== this.generation) {
+        return;
+      }
+      if (!device) {
+        void this.post({ type: 'status', text: vscode.l10n.t('No Android device connected.') });
+        this.retryLater();
+        return;
+      }
+      const source = await this.createSource();
+      if (gen !== this.generation) {
+        source.stop();
+        return;
+      }
+      this.source = source;
+      void this.post({
+        type: 'mode',
+        mode: source.mode,
+        label: source.mode === 'scrcpy' ? 'scrcpy' : vscode.l10n.t('Screenshots'),
+      });
+    } catch (err) {
+      if (gen === this.generation) {
+        this.log.error(this.describeError(err));
+        void this.post({ type: 'status', text: this.describeError(err) });
+        this.retryLater();
+      }
+    } finally {
+      this.starting = false;
+      // stop() + start() may have happened while we were busy.
+      if (gen !== this.generation) {
+        void this.start();
+      }
+    }
   }
 
   private stop(): void {
-    this.isRunning = false;
     this.generation++;
-    clearTimeout(this.timer);
-    this.timer = undefined;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.source?.stop();
+    this.source = undefined;
   }
 
   private restart(): void {
     this.stop();
-    this.lastFrame = undefined;
-    this.start();
+    void this.start();
   }
 
-  private schedule(gen: number, delay: number): void {
-    if (gen !== this.generation) {
+  private retryLater(): void {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.start();
+    }, RETRY_MS);
+  }
+
+  /** A running source broke (device unplugged, server crashed…): show it and retry. */
+  private onSourceFailed(source: MirrorSource, err: Error): void {
+    if (source !== this.source) {
       return;
     }
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      void this.tick(gen);
-    }, delay);
-  }
-
-  /** Captures right away instead of waiting for the next tick (used after input). */
-  private kick(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
-      void this.tick(this.generation);
-    }
-  }
-
-  private async tick(gen: number): Promise<void> {
-    if (gen !== this.generation) {
-      return;
-    }
-    try {
-      if (!(await this.ensureDevice())) {
-        this.post({ type: 'status', kind: 'noDevice', text: vscode.l10n.t('No Android device connected.') });
-        this.lastFrame = undefined;
-        this.schedule(gen, 2000);
-        return;
-      }
-
-      const frame = await this.adb.screencap();
-      if (gen !== this.generation) {
-        return;
-      }
-      if (!this.lastFrame || !this.lastFrame.equals(frame)) {
-        this.lastFrame = frame;
-        // Copy into a standalone buffer so only the PNG bytes are transferred.
-        await this.view?.webview.postMessage({ type: 'frame', data: new Uint8Array(frame) });
-      }
-      const interval = vscode.workspace.getConfiguration('phonePane').get<number>('frameInterval', 50);
-      this.schedule(gen, Math.max(0, interval));
-    } catch (err) {
-      if (gen !== this.generation) {
-        return;
-      }
-      this.post({ type: 'status', kind: 'error', text: this.describeError(err) });
-      this.lastFrame = undefined;
-      // The device may have been unplugged: look it up again on the next attempt.
-      this.deviceReady = false;
-      this.schedule(gen, 2000);
-    }
+    this.source = undefined;
+    this.log.warn(`${source.mode} stopped: ${err.message}`);
+    void this.post({ type: 'status', text: this.describeError(err) });
+    this.retryLater();
   }
 
   /** Keeps the selected device if it is still online, otherwise picks the first one available. */
-  private async ensureDevice(): Promise<boolean> {
-    if (this.deviceReady) {
-      return true;
-    }
+  private async pickDevice(): Promise<Device | undefined> {
     const online = (await this.adb.devices()).filter((d) => d.state === 'device');
-    const target = online.find((d) => d.serial === this.adb.serial) ?? online[0];
-    if (!target) {
-      return false;
+    const device = online.find((d) => d.serial === this.adb.serial) ?? online[0];
+    if (device) {
+      if (device.serial !== this.adb.serial) {
+        this.adb.serial = device.serial;
+        await this.context.globalState.update(SERIAL_KEY, device.serial);
+      }
+      void this.post({ type: 'device', serial: device.serial, model: device.model ?? device.serial });
     }
-    await this.useDevice(target);
-    return true;
+    return device;
   }
 
-  private async useDevice(device: Device): Promise<void> {
-    this.adb.serial = device.serial;
-    this.deviceReady = true;
-    await this.context.globalState.update(SERIAL_KEY, device.serial);
-    this.post({ type: 'device', serial: device.serial, model: device.model ?? device.serial });
+  private async createSource(): Promise<MirrorSource> {
+    const config = vscode.workspace.getConfiguration('phonePane');
+    const mode = config.get<Mode>('mode', 'auto');
+
+    if (mode !== 'screencap' && !(mode === 'auto' && this.scrcpyFailed)) {
+      const server = await findScrcpyServer();
+      let problem: string | undefined;
+      if (!server) {
+        problem = vscode.l10n.t('scrcpy-server was not found. Install scrcpy or set "phonePane.scrcpyServerPath".');
+      } else if (!this.webviewH264) {
+        problem = vscode.l10n.t('This VS Code cannot decode H.264 video in webviews.');
+      } else {
+        void this.post({ type: 'status', text: vscode.l10n.t('Starting scrcpy…') });
+        const source: ScrcpySource = new ScrcpySource(
+          this.adb,
+          server,
+          { maxSize: config.get<number>('maxSize', 1280), bitRate: config.get<number>('videoBitRate', 8_000_000) },
+          (m) => this.post(m),
+          this.log,
+          (err) => this.onSourceFailed(source, err),
+        );
+        try {
+          await source.start();
+          return source;
+        } catch (err) {
+          this.scrcpyFailed = true;
+          problem = vscode.l10n.t('scrcpy could not start: {0}', this.describeError(err));
+        }
+      }
+
+      if (mode === 'scrcpy') {
+        throw new Error(problem);
+      }
+      this.log.warn(`${problem} Falling back to screencap.`);
+      void this.post({ type: 'toast', text: vscode.l10n.t('{0} Using screenshots instead (slower).', problem) });
+    }
+
+    const source: ScreencapSource = new ScreencapSource(
+      this.adb,
+      (m) => this.post(m),
+      (err) => this.onSourceFailed(source, err),
+      (err) => this.describeError(err),
+    );
+    source.start();
+    return source;
   }
 
-  // ---- Input --------------------------------------------------------------
+  // ---- Webview messages ---------------------------------------------------
 
   private onMessage(m: ClientMessage): void {
     switch (m.type) {
       case 'ready':
-        this.deviceReady = false;
-        this.lastFrame = undefined;
-        this.post({ type: 'paused', paused: this.paused });
+        this.webviewH264 = m.h264;
+        this.log.info(`Webview ready (H.264 decoding ${m.h264 ? 'available' : 'not available'})`);
+        void this.post({ type: 'paused', paused: this.paused });
         this.restart();
         return;
       case 'retry':
+        this.scrcpyFailed = false;
         this.restart();
         return;
-      case 'tap':
-        return this.input(() => this.adb.tap(m.x, m.y));
-      case 'swipe':
-        return this.input(() => this.adb.swipe(m.x1, m.y1, m.x2, m.y2, m.duration));
-      case 'key':
-        return this.input(() => this.adb.keyevent(m.code));
-      case 'text':
-        return this.input(() => this.adb.text(m.text));
+      case 'videoError':
+        this.log.warn(`Webview video decoder error: ${m.message}`);
+        this.source?.videoError?.();
+        return;
+      default:
+        this.source?.input(m);
     }
-  }
-
-  /** Runs input commands one after another so taps and keystrokes keep their order. */
-  private input(action: () => Promise<unknown>): void {
-    if (!this.adb.serial) {
-      return;
-    }
-    this.inputQueue = this.inputQueue
-      .then(action)
-      .then(() => this.kick())
-      .catch((err) => this.post({ type: 'toast', text: this.describeError(err) }));
   }
 
   // ---- Helpers ------------------------------------------------------------
@@ -248,8 +310,8 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
     return message;
   }
 
-  private post(message: Record<string, unknown>): void {
-    void this.view?.webview.postMessage(message);
+  private post(message: Record<string, unknown>): Thenable<unknown> {
+    return this.view?.webview.postMessage(message) ?? Promise.resolve(false);
   }
 
   private html(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
@@ -283,7 +345,10 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
       <p id="status-text">${t.connecting}</p>
       <button id="retry" hidden>${t.retry}</button>
     </div>
-    <div id="paused-badge" hidden>${t.paused}</div>
+    <div id="badges">
+      <span id="mode-badge" hidden></span>
+      <span id="paused-badge" hidden>${t.paused}</span>
+    </div>
   </div>
   <nav id="nav">
     <button data-key="25" title="${t.volumeDown}">${icons.volumeDown}</button>

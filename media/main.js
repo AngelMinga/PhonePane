@@ -7,6 +7,7 @@
   const status = /** @type {HTMLElement} */ (document.getElementById('status'));
   const statusText = /** @type {HTMLElement} */ (document.getElementById('status-text'));
   const retry = /** @type {HTMLButtonElement} */ (document.getElementById('retry'));
+  const modeBadge = /** @type {HTMLElement} */ (document.getElementById('mode-badge'));
   const pausedBadge = /** @type {HTMLElement} */ (document.getElementById('paused-badge'));
   const toast = /** @type {HTMLElement} */ (document.getElementById('toast'));
 
@@ -22,49 +23,122 @@
     ArrowLeft: 21,
     ArrowRight: 22,
   };
+  const TOUCH = { down: 0, up: 1, move: 2 };
   const LONG_PRESS_MS = 450;
   const DRAG_THRESHOLD_CSS_PX = 8;
 
-  // ---- Frames -------------------------------------------------------------
+  /** @type {'scrcpy' | 'screencap' | null} */
+  let mode = null;
 
-  /** @type {Uint8Array | null} */
-  let pendingFrame = null;
-  let decoding = false;
+  function showScreen() {
+    canvas.hidden = false;
+    status.hidden = true;
+  }
 
-  /** Decodes frames one at a time, always jumping to the newest one. */
-  async function drawFrame(/** @type {Uint8Array} */ bytes) {
-    pendingFrame = bytes;
-    if (decoding) {
+  function resizeCanvas(/** @type {number} */ width, /** @type {number} */ height) {
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+  }
+
+  // ---- scrcpy: H.264 via WebCodecs ------------------------------------------
+
+  /** @type {VideoDecoder | null} */
+  let decoder = null;
+  let decoderCodec = '';
+  let needKeyFrame = true;
+  let timestamp = 0;
+
+  function closeDecoder() {
+    if (decoder && decoder.state !== 'closed') {
+      decoder.close();
+    }
+    decoder = null;
+    needKeyFrame = true;
+  }
+
+  function createDecoder(/** @type {string} */ codec) {
+    closeDecoder();
+    decoder = new VideoDecoder({
+      output: (frame) => {
+        resizeCanvas(frame.displayWidth, frame.displayHeight);
+        ctx.drawImage(frame, 0, 0);
+        frame.close();
+        showScreen();
+      },
+      error: (e) => {
+        decoder = null;
+        needKeyFrame = true;
+        vscode.postMessage({ type: 'videoError', message: String(e) });
+      },
+    });
+    decoder.configure({ codec, optimizeForLatency: true });
+    decoderCodec = codec;
+  }
+
+  function onChunk(/** @type {{key: boolean, codec: string, data: Uint8Array}} */ m) {
+    if (m.key && (!decoder || decoder.state === 'closed' || decoderCodec !== m.codec)) {
+      createDecoder(m.codec);
+    }
+    if (!decoder || (needKeyFrame && !m.key)) {
       return;
     }
-    decoding = true;
+    needKeyFrame = false;
+    // Drop frames if the decoder falls behind; the next key frame resynchronises.
+    if (decoder.decodeQueueSize > 10 && !m.key) {
+      needKeyFrame = true;
+      vscode.postMessage({ type: 'videoError', message: 'decoder queue overflow' });
+      return;
+    }
+    decoder.decode(
+      new EncodedVideoChunk({ type: m.key ? 'key' : 'delta', timestamp: (timestamp += 16_666), data: m.data }),
+    );
+  }
+
+  async function supportsH264() {
+    if (typeof VideoDecoder === 'undefined') {
+      return false;
+    }
     try {
-      while (pendingFrame) {
-        const next = pendingFrame;
-        pendingFrame = null;
+      const { supported } = await VideoDecoder.isConfigSupported({ codec: 'avc1.640028' });
+      return !!supported;
+    } catch {
+      return false;
+    }
+  }
+
+  // ---- screencap: PNG frames ------------------------------------------------
+
+  /** @type {Uint8Array | null} */
+  let pendingPng = null;
+  let decodingPng = false;
+
+  /** Decodes PNG frames one at a time, always jumping to the newest one. */
+  async function onPng(/** @type {Uint8Array} */ bytes) {
+    pendingPng = bytes;
+    if (decodingPng) {
+      return;
+    }
+    decodingPng = true;
+    try {
+      while (pendingPng) {
+        const next = pendingPng;
+        pendingPng = null;
         const bitmap = await createImageBitmap(new Blob([next], { type: 'image/png' }));
-        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-        }
+        resizeCanvas(bitmap.width, bitmap.height);
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close();
-        canvas.hidden = false;
-        status.hidden = true;
+        showScreen();
       }
     } catch {
       // A corrupted frame is simply skipped.
     } finally {
-      decoding = false;
+      decodingPng = false;
     }
   }
 
-  function showStatus(/** @type {string} */ text, /** @type {boolean} */ canRetry) {
-    canvas.hidden = true;
-    status.hidden = false;
-    statusText.textContent = text;
-    retry.hidden = !canRetry;
-  }
+  // ---- Messages from the extension ------------------------------------------
 
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let toastTimer;
@@ -72,17 +146,36 @@
     toast.textContent = text;
     toast.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toast.hidden = true), 4000);
+    toastTimer = setTimeout(() => (toast.hidden = true), 6000);
   }
 
   window.addEventListener('message', (event) => {
     const m = event.data;
     switch (m.type) {
+      case 'chunk':
+        onChunk(m);
+        break;
+      case 'videoSize':
+        // Rotation or resize: the next key frame starts a fresh decoder.
+        closeDecoder();
+        break;
       case 'frame':
-        void drawFrame(m.data);
+        void onPng(m.data);
+        break;
+      case 'mode':
+        mode = m.mode;
+        modeBadge.textContent = m.label;
+        modeBadge.hidden = false;
+        if (mode !== 'scrcpy') {
+          closeDecoder();
+        }
         break;
       case 'status':
-        showStatus(m.text, true);
+        closeDecoder();
+        canvas.hidden = true;
+        status.hidden = false;
+        statusText.textContent = m.text;
+        retry.hidden = false;
         break;
       case 'device':
         canvas.title = m.model;
@@ -98,10 +191,10 @@
 
   retry.addEventListener('click', () => vscode.postMessage({ type: 'retry' }));
 
-  // ---- Touch --------------------------------------------------------------
+  // ---- Pointer --------------------------------------------------------------
 
-  /** Converts a pointer position into device pixels. */
-  function toDevice(/** @type {{clientX: number, clientY: number}} */ e) {
+  /** Converts a pointer position into canvas (= video / device) pixels. */
+  function toCanvas(/** @type {{clientX: number, clientY: number}} */ e) {
     const r = canvas.getBoundingClientRect();
     const x = ((e.clientX - r.left) * canvas.width) / r.width;
     const y = ((e.clientY - r.top) * canvas.height) / r.height;
@@ -109,6 +202,10 @@
       x: Math.round(Math.min(Math.max(x, 0), canvas.width - 1)),
       y: Math.round(Math.min(Math.max(y, 0), canvas.height - 1)),
     };
+  }
+
+  function sendTouch(/** @type {number} */ action, /** @type {{x: number, y: number}} */ p) {
+    vscode.postMessage({ type: 'touch', action, x: p.x, y: p.y, w: canvas.width, h: canvas.height });
   }
 
   /** @type {{x: number, y: number, clientX: number, clientY: number, time: number} | null} */
@@ -120,34 +217,54 @@
     }
     canvas.focus();
     canvas.setPointerCapture(e.pointerId);
-    down = { ...toDevice(e), clientX: e.clientX, clientY: e.clientY, time: performance.now() };
+    flushText();
+    const p = toCanvas(e);
+    down = { ...p, clientX: e.clientX, clientY: e.clientY, time: performance.now() };
+    if (mode === 'scrcpy') {
+      sendTouch(TOUCH.down, p);
+    }
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (down && mode === 'scrcpy') {
+      sendTouch(TOUCH.move, toCanvas(e));
+    }
   });
 
   canvas.addEventListener('pointerup', (e) => {
     if (!down) {
       return;
     }
-    flushText();
     const start = down;
     down = null;
-    const end = toDevice(e);
+    const end = toCanvas(e);
+
+    if (mode === 'scrcpy') {
+      sendTouch(TOUCH.up, end);
+      return;
+    }
+
+    // screencap mode: replay the whole gesture with adb input.
     const elapsed = performance.now() - start.time;
     const moved = Math.hypot(e.clientX - start.clientX, e.clientY - start.clientY) > DRAG_THRESHOLD_CSS_PX;
-
     if (moved) {
       vscode.postMessage({ type: 'swipe', x1: start.x, y1: start.y, x2: end.x, y2: end.y, duration: Math.max(80, elapsed) });
     } else if (elapsed >= LONG_PRESS_MS) {
-      // A swipe that does not move is a long press.
       vscode.postMessage({ type: 'swipe', x1: start.x, y1: start.y, x2: start.x, y2: start.y, duration: elapsed });
     } else {
       vscode.postMessage({ type: 'tap', x: start.x, y: start.y });
     }
   });
 
-  canvas.addEventListener('pointercancel', () => (down = null));
+  canvas.addEventListener('pointercancel', (e) => {
+    if (down && mode === 'scrcpy') {
+      sendTouch(TOUCH.up, toCanvas(e));
+    }
+    down = null;
+  });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  // ---- Scroll wheel -> swipe ----------------------------------------------
+  // ---- Scroll wheel -----------------------------------------------------------
 
   let wheelDelta = 0;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -159,16 +276,32 @@
     'wheel',
     (e) => {
       e.preventDefault();
-      wheelOrigin = toDevice(e);
-      wheelDelta += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      const pixels = e.deltaMode === 1 ? 16 : 1;
+
+      if (mode === 'scrcpy') {
+        // scrcpy expects "notches" (1 per mouse wheel click, ~100 px).
+        const p = toCanvas(e);
+        vscode.postMessage({
+          type: 'scroll',
+          ...p,
+          w: canvas.width,
+          h: canvas.height,
+          dx: (-e.deltaX * pixels) / 100,
+          dy: (-e.deltaY * pixels) / 100,
+        });
+        return;
+      }
+
+      // screencap mode: accumulate and turn into a swipe.
+      wheelOrigin = toCanvas(e);
+      wheelDelta += e.deltaY * pixels;
       if (wheelTimer) {
         return;
       }
       wheelTimer = setTimeout(() => {
         wheelTimer = undefined;
         const r = canvas.getBoundingClientRect();
-        const scale = canvas.height / r.height;
-        const distance = Math.min(Math.abs(wheelDelta) * scale, canvas.height * 0.4);
+        const distance = Math.min((Math.abs(wheelDelta) * canvas.height) / r.height, canvas.height * 0.4);
         const direction = wheelDelta > 0 ? -1 : 1; // scrolling down = finger moves up
         wheelDelta = 0;
         if (distance < 5) {
@@ -188,7 +321,7 @@
     { passive: false },
   );
 
-  // ---- Keyboard -----------------------------------------------------------
+  // ---- Keyboard ---------------------------------------------------------------
 
   let textBuffer = '';
   /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -205,7 +338,7 @@
 
   canvas.addEventListener('keydown', (e) => {
     // Leave shortcuts (Cmd/Ctrl+...) to VS Code.
-    if (e.metaKey || e.ctrlKey || e.altKey) {
+    if (e.metaKey || e.ctrlKey) {
       return;
     }
     if (e.key in KEYCODES) {
@@ -214,15 +347,16 @@
       vscode.postMessage({ type: 'key', code: KEYCODES[/** @type {keyof typeof KEYCODES} */ (e.key)] });
       return;
     }
-    if (e.key.length === 1) {
+    if (e.key.length === 1 || (e.key.length === 2 && e.key.codePointAt(0) > 0xffff)) {
       e.preventDefault();
       textBuffer += e.key;
       clearTimeout(textTimer);
-      textTimer = setTimeout(flushText, 80);
+      // scrcpy injects text immediately; adb input is slow, so batch it.
+      textTimer = setTimeout(flushText, mode === 'scrcpy' ? 0 : 80);
     }
   });
 
-  // ---- Navigation bar -----------------------------------------------------
+  // ---- Navigation bar ---------------------------------------------------------
 
   document.querySelectorAll('#nav button').forEach((button) => {
     button.addEventListener('click', () => {
@@ -231,5 +365,5 @@
     });
   });
 
-  vscode.postMessage({ type: 'ready' });
+  void supportsH264().then((h264) => vscode.postMessage({ type: 'ready', h264 }));
 })();

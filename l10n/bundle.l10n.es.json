@@ -11,5 +11,11 @@
   "Power": "Encendido",
   "Volume up": "Subir volumen",
   "Volume down": "Bajar volumen",
-  "Paused": "En pausa"
+  "Paused": "En pausa",
+  "scrcpy-server was not found. Install scrcpy or set \"phonePane.scrcpyServerPath\".": "No se encontró scrcpy-server. Instala scrcpy o configura «phonePane.scrcpyServerPath».",
+  "This VS Code cannot decode H.264 video in webviews.": "Este VS Code no puede decodificar vídeo H.264 en los webviews.",
+  "Starting scrcpy…": "Iniciando scrcpy…",
+  "scrcpy could not start: {0}": "scrcpy no pudo iniciarse: {0}",
+  "{0} Using screenshots instead (slower).": "{0} Se usarán capturas de pantalla (más lento).",
+  "Screenshots": "Capturas"
 }

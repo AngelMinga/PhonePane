@@ -5,5 +5,13 @@
   "command.pause.title": "Pause Mirroring",
   "command.resume.title": "Resume Mirroring",
   "config.adbPath": "Path to the `adb` executable. Leave empty to detect it automatically (PATH, `ANDROID_HOME`, Android SDK, Homebrew).",
-  "config.frameInterval": "Milliseconds to wait between screen captures. Lower values are smoother but use more CPU."
+  "config.frameInterval": "Screenshot mode: milliseconds to wait between captures.",
+  "command.showLog.title": "Show Log",
+  "config.mode": "How the screen is mirrored. `auto` uses scrcpy when it is installed and falls back to screenshots.",
+  "config.mode.auto": "scrcpy if available, otherwise screenshots.",
+  "config.mode.scrcpy": "Always use scrcpy (smooth H.264 video, real-time touch).",
+  "config.mode.screencap": "Always use `adb screencap` (slow, needs only adb).",
+  "config.scrcpyServerPath": "Path to the `scrcpy-server` file of an installed scrcpy. Leave empty to detect it (Homebrew, `/usr/share/scrcpy`, `SCRCPY_SERVER_PATH`).",
+  "config.maxSize": "scrcpy: maximum video width or height in pixels (`0` = native resolution).",
+  "config.videoBitRate": "scrcpy: video bit rate in bits per second."
 }

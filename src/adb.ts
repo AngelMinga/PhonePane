@@ -51,8 +51,13 @@ export function resolveAdbPath(): string {
 export class Adb {
   constructor(public bin: string, public serial?: string) {}
 
+  /** Prefixes `-s <serial>` when a device is selected. */
+  withSerial(args: string[]): string[] {
+    return this.serial ? ['-s', this.serial, ...args] : args;
+  }
+
   exec(args: string[], timeout = 10_000): Promise<Buffer> {
-    const fullArgs = this.serial ? ['-s', this.serial, ...args] : args;
+    const fullArgs = this.withSerial(args);
     return new Promise((resolve, reject) => {
       execFile(
         this.bin,
