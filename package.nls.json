@@ -13,5 +13,7 @@
   "config.mode.screencap": "Always use `adb screencap` (slow, needs only adb).",
   "config.scrcpyServerPath": "Path to the `scrcpy-server` file of an installed scrcpy. Leave empty to detect it (Homebrew, `/usr/share/scrcpy`, `SCRCPY_SERVER_PATH`).",
   "config.maxSize": "scrcpy: maximum video width or height in pixels (`0` = native resolution).",
-  "config.videoBitRate": "scrcpy: video bit rate in bits per second."
+  "config.videoBitRate": "scrcpy: video bit rate in bits per second.",
+  "command.moveLeft.title": "Move to Left Side Bar",
+  "command.moveRight.title": "Move to Right Side Bar"
 }

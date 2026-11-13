@@ -13,6 +13,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('phonePane.pause', () => provider.setPaused(true)),
     vscode.commands.registerCommand('phonePane.resume', () => provider.setPaused(false)),
     vscode.commands.registerCommand('phonePane.showLog', () => provider.showLog()),
+    vscode.commands.registerCommand('phonePane.moveLeft', () => provider.moveTo('left')),
+    vscode.commands.registerCommand('phonePane.moveRight', () => provider.moveTo('right')),
   );
 }
 

@@ -2,7 +2,7 @@
   "name": "phonepane",
   "displayName": "PhonePane",
   "description": "%extension.description%",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "angelminga",
   "license": "MIT",
   "repository": {
@@ -31,6 +31,13 @@
       "activitybar": [
         {
           "id": "phonePane",
+          "title": "PhonePane",
+          "icon": "media/phone.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "phonePaneRight",
           "title": "PhonePane",
           "icon": "media/phone.svg"
         }
@@ -69,6 +76,18 @@
         "title": "%command.showLog.title%",
         "category": "PhonePane",
         "icon": "$(output)"
+      },
+      {
+        "command": "phonePane.moveLeft",
+        "title": "%command.moveLeft.title%",
+        "category": "PhonePane",
+        "icon": "$(layout-sidebar-left)"
+      },
+      {
+        "command": "phonePane.moveRight",
+        "title": "%command.moveRight.title%",
+        "category": "PhonePane",
+        "icon": "$(layout-sidebar-right)"
       }
     ],
     "menus": {
@@ -92,6 +111,26 @@
           "command": "phonePane.showLog",
           "when": "view == phonePane.mirror",
           "group": "overflow@1"
+        },
+        {
+          "command": "phonePane.moveRight",
+          "when": "view == phonePane.mirror && phonePane.side != right",
+          "group": "navigation@3"
+        },
+        {
+          "command": "phonePane.moveLeft",
+          "when": "view == phonePane.mirror && phonePane.side == right",
+          "group": "navigation@3"
+        },
+        {
+          "command": "phonePane.moveLeft",
+          "when": "view == phonePane.mirror && phonePane.side != left",
+          "group": "overflow@2"
+        },
+        {
+          "command": "phonePane.moveRight",
+          "when": "view == phonePane.mirror && phonePane.side != right",
+          "group": "overflow@2"
         }
       ],
       "commandPalette": [

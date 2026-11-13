@@ -33,7 +33,7 @@ No hace falta abrir scrcpy en el terminal: la extensión arranca y detiene el se
 | Enter / Retroceso / Supr / Tab / flechas | Teclas equivalentes |
 | Esc | Atrás |
 
-La barra inferior tiene Atrás, Inicio, Recientes, volumen y encendido. En el título de la vista están **Pausar** y **Seleccionar dispositivo**. La captura se detiene sola cuando la vista no está visible.
+La barra inferior tiene Atrás, Inicio, Recientes, volumen y encendido. En el título de la vista están **Pausar**, **Seleccionar dispositivo** y **Mover a la barra derecha/izquierda**, que lleva el panel de un lado al otro (también puedes arrastrarlo). La captura se detiene sola cuando la vista no está visible.
 
 ## Ajustes
 

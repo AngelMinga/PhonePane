@@ -7,6 +7,10 @@ import { findScrcpyServer, ScrcpySource } from './scrcpy';
 
 const SERIAL_KEY = 'phonePane.serial';
 const RETRY_MS = 2000;
+const SIDE_KEY = 'phonePane.side';
+/** View containers declared in package.json (activity bar and secondary side bar). */
+const LEFT_CONTAINER = 'workbench.view.extension.phonePane';
+const RIGHT_CONTAINER = 'workbench.view.extension.phonePaneRight';
 
 type Mode = 'auto' | 'scrcpy' | 'screencap';
 
@@ -35,6 +39,7 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
   ) {
     this.adb.serial = context.globalState.get<string>(SERIAL_KEY);
     void vscode.commands.executeCommand('setContext', 'phonePane.paused', false);
+    void vscode.commands.executeCommand('setContext', 'phonePane.side', context.globalState.get(SIDE_KEY, 'left'));
 
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -54,16 +59,27 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
+    // Moving the view to another side bar resolves a new webview; drop the old one first.
+    if (this.view && this.view !== view) {
+      this.stop();
+      this.webviewH264 = undefined;
+    }
     this.view = view;
     const mediaRoot = vscode.Uri.joinPath(this.context.extensionUri, 'media');
     view.webview.options = { enableScripts: true, localResourceRoots: [mediaRoot] };
     view.webview.html = this.html(view.webview, mediaRoot);
 
-    view.webview.onDidReceiveMessage((m: ClientMessage) => this.onMessage(m), null, this.disposables);
+    // Events of an old webview (one that was moved or disposed) must not touch the current one.
+    const isCurrent = () => this.view === view;
+    view.webview.onDidReceiveMessage(
+      (m: ClientMessage) => isCurrent() && this.onMessage(m),
+      null,
+      this.disposables,
+    );
     view.onDidChangeVisibility(
       () => {
         // The webview is torn down while hidden; it says "ready" again when shown.
-        if (!view.visible) {
+        if (isCurrent() && !view.visible) {
           this.webviewH264 = undefined;
           this.stop();
         }
@@ -73,13 +89,33 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider, vscode.Di
     );
     view.onDidDispose(
       () => {
-        this.stop();
-        this.view = undefined;
-        this.webviewH264 = undefined;
+        if (isCurrent()) {
+          this.stop();
+          this.view = undefined;
+          this.webviewH264 = undefined;
+        }
       },
       null,
       this.disposables,
     );
+  }
+
+  /** Moves the view to the primary (left) or secondary (right) side bar. */
+  async moveTo(side: 'left' | 'right'): Promise<void> {
+    const destinationId = side === 'left' ? LEFT_CONTAINER : RIGHT_CONTAINER;
+    try {
+      await vscode.commands.executeCommand('vscode.moveViews', {
+        viewIds: [MirrorViewProvider.viewId],
+        destinationId,
+      });
+      await this.context.globalState.update(SIDE_KEY, side);
+      void vscode.commands.executeCommand('setContext', 'phonePane.side', side);
+    } catch (err) {
+      this.log.error(`Could not move the view: ${err}`);
+      // Older VS Code: let the user pick the destination by hand.
+      await vscode.commands.executeCommand(`${MirrorViewProvider.viewId}.focus`);
+      await vscode.commands.executeCommand('workbench.action.moveFocusedView');
+    }
   }
 
   // ---- Commands -----------------------------------------------------------
